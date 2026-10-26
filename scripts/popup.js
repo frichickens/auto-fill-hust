@@ -38,6 +38,13 @@ function formatResult(result) {
     }
   }
 
+  const unknown = Array.isArray(result.unknown) ? result.unknown : [];
+  if (unknown.length) {
+    lines.push("");
+    lines.push(`Câu không có trong ngân hàng (bỏ qua, ${unknown.length} câu):`);
+    unknown.forEach((q, i) => lines.push(`${i + 1}. ${q}`));
+  }
+
   return lines.join("\n");
 }
 
@@ -68,7 +75,32 @@ fillBtn.addEventListener("click", () => {
       return;
     }
 
-    chrome.tabs.sendMessage(tab.id, { action: "fillForm" }, (response) => {
+    // Tabs opened before the extension was (re)loaded have no content script:
+    // inject it on demand, then retry once.
+    const sendFill = (canInject) =>
+      chrome.tabs.sendMessage(tab.id, { action: "fillForm" }, (response) => {
+        if (chrome.runtime.lastError && canInject) {
+          chrome.scripting.executeScript(
+            { target: { tabId: tab.id }, files: ["scripts/content.js"] },
+            () => {
+              if (chrome.runtime.lastError) {
+                fillBtn.disabled = false;
+                showStatus(
+                  "error",
+                  "Không chèn được content script.",
+                  `${chrome.runtime.lastError.message}\nThử F5 trang Forms rồi bấm lại.`,
+                );
+                return;
+              }
+              sendFill(false);
+            },
+          );
+          return;
+        }
+        handleResponse(response);
+      });
+
+    const handleResponse = (response) => {
       fillBtn.disabled = false;
 
       if (chrome.runtime.lastError) {
@@ -97,6 +129,8 @@ fillBtn.addEventListener("click", () => {
         response.message || "Hoàn tất.",
         formatResult(response),
       );
-    });
+    };
+
+    sendFill(true);
   });
 });
